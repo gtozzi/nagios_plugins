@@ -1,0 +1,135 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
+# Check for current and projected bandwidth usage
+
+import os, sys, subprocess
+import re
+import datetime
+from optparse import OptionParser, OptionGroup
+
+_name = 'check_traffic'
+_version = '0.1'
+_author = 'Gabriele Tozzi <gabriele@tozzi.eu>'
+
+# VnStat PATH
+VNSTAT = '/usr/bin/vnstat'
+
+# Status map
+SMAP = {
+    0: 'OK',
+    1: 'Warning',
+    2: 'Critical',
+    3: 'Unknown',
+}
+
+# Initialize return vars
+status = 3
+info   = 'Internal generic error'
+
+# Perse command line
+usage = "%prog [options] -i <interface> -l <limit>"
+parser = OptionParser(usage=usage, version=_name + ' ' + _version)
+parser.add_option("-i", "--interface", dest="interface",
+    help="The interface to monitory")
+wgroup = OptionGroup(parser, "Warning/Critical levels",
+    "You only need to specify a limit level. " + \
+    "A warning will be automatically issued when the " + \
+    "predicted bandwidth usage will exceed this level. " + \
+    "Critical state will be set instead when the level " + \
+    "will be exceeded.")
+parser.add_option_group(wgroup)
+parser.add_option("-l", "--limit", dest="limit",
+    help="The monthly bandwidth limit in bytes. Append K,M,G,T")
+parser.add_option("-v", "--verbose", dest="verbose",
+    help="Increase verbosity. Use up to 3 times to get more output.",
+    action="count")
+
+(options, args) = parser.parse_args()
+
+if not options.interface:
+    parser.error('You must specify an interface to query')
+else:
+    interface = options.interface
+if not options.limit:
+    parser.error('You must specify a bandwidth limit')
+
+# Convert limit in Bytes
+limit = str(options.limit).upper()
+validlim = re.compile(r'^([0-9]+)(|K|M|G|T)$')
+if not validlim.match(limit):
+    parser.error('Unvalid limit argument')
+(b, v, u, e) = validlim.split(limit)
+pows = { '': 0, 'K': 1, 'M': 2, 'G': 3, 'T': 4 }
+limit = int(v) * 1024**pows[u]
+
+# Print some debug messages
+if options.verbose >= 3:
+    print 'MAX verbosity reached.'
+    print 'Interface:', interface
+    print 'Limit:', options.limit, '(', limit, ')'
+
+# Executes vnstat
+# Command output will be like this:
+cmd = [VNSTAT, '--dumpdb', '-i', interface]
+if options.verbose >= 3:
+    print 'Executing:', cmd
+p = subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+stdout, stderr = p.communicate()
+ret = p.poll()
+if options.verbose >= 3:
+    print "Subprocess results:\nEXIT CODE:", ret, "\nSTDERR:\n", stderr, \
+        "\nSTDOUT:\n", stdout
+if ret != 0:
+    # Wrong subprocess exit code
+    status = 3
+    info = 'vnstat return code: ' + str(ret)
+elif len(stderr):
+    status = 3
+    info = 'vnstat stderr was not empty'
+else:
+    rx = None
+    tx = None
+    # Parse subprocess data
+    lines = stdout.split("\n")
+    for l in lines:
+        f = l.split(';')
+        if f[0] == 'm' and f[1] == '0':
+            # Here are current month counters
+            rx = int(f[3]) #RX in MiB
+            tx = int(f[4]) #TX in MiB
+            break;
+    if tx == None or tx == None:
+        status = 3
+        info = 'unable to gather required data'
+    else:
+        # Convert MiB in Bytes
+        bw = ( (rx+tx) // 8 ) * 1024**2
+        # Predict monthly traffic
+        now = datetime.datetime.now()
+        y = now.year
+        m = now.month
+        mstart = datetime.datetime(y,m,1,0,0,0,0,now.tzinfo)
+        y = now.year
+        m += 1
+        if m > 12:
+            y += 1
+            m = 1
+        mnext = datetime.datetime(y,m,1,0,0,0,0,now.tzinfo)
+        e = now - mstart
+        e = e.seconds + e.days*24*60*60
+        t = mnext - mstart
+        t = t.seconds + t.days*24*60*60
+        pw = int( (bw / e) * t )
+        if bw > limit:
+            status = 2
+        elif pw > limit:
+            status = 1
+        else:
+            status = 0
+        info = 'Montly traffic: %uMB, predicted: %uMB' % \
+            ( bw//1024**2, pw//1024**2 )
+
+# Display message and exit
+print SMAP[status].upper() + ': ' + info
+sys.exit(status)
