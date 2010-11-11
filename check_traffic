@@ -96,15 +96,19 @@ else:
         f = l.split(';')
         if f[0] == 'm' and f[1] == '0':
             # Here are current month counters
-            rx = int(f[3]) #RX in MiB
-            tx = int(f[4]) #TX in MiB
+            rx = long(f[3]) #RX in MiB
+            tx = long(f[4]) #TX in MiB
             break;
+    if options.verbose >= 3:
+        print 'Readed values: rx', rx, ', tx', tx
     if tx == None or tx == None:
         status = 3
         info = 'unable to gather required data'
     else:
         # Convert MiB in Bytes
         bw = ( (rx+tx) // 8 ) * 1024**2
+        if options.verbose >= 3:
+            print 'Total values in Bytes:', bw
         # Predict monthly traffic
         now = datetime.datetime.now()
         y = now.year
@@ -120,7 +124,9 @@ else:
         e = e.seconds + e.days*24*60*60
         t = mnext - mstart
         t = t.seconds + t.days*24*60*60
-        pw = int( (bw / e) * t )
+        pw = long( (bw / e) * t )
+        if options.verbose >= 3:
+            print 'Predicted traffic in bytes:', pw
         if bw > limit:
             status = 2
         elif pw > limit:
