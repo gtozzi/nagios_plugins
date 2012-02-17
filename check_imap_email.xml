@@ -1,0 +1,33 @@
+<check_imap_email_config>
+    
+    <!--
+        A folder section defines all information needed to open an IMAP folder
+        
+        Required properties are: server, user, pass
+    -->
+    <folder id="nagios_inbox" server="127.0.0.1" user="nagios" pass="nagios"/>
+    
+    <!--
+        A template teaches check_imap_email_config how to recognize an email and
+        take status decision. Status defaults to UNKNOWN, worst status has always
+        precedence over better.
+        
+        Valid status are: ok, warn, err
+    -->
+    <template id="areca_backup">
+        <!--
+            Every template must specify at least ONE subject element. Subjects
+            are regexp tested in order to see whether template matches. Optional
+            parameter "status" defines how this subject (if found) affects final
+            status
+        -->
+        <subject>Rapporto Backup</subject>
+        
+        <!--
+            Every body tag specifies a (multiline) regexp to look for in email
+            body. If the given string is found, then the given status is returned.
+        -->
+        <body status="ok">Overall Status : Success</body>
+    </template>
+    
+</check_imap_email_config>
