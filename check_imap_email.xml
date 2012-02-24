@@ -4,8 +4,10 @@
         A folder section defines all information needed to open an IMAP folder
         
         Required properties are: server, user, pass
+        Optional properties are: folder (es. INBOX.Folder name.Subfolder
     -->
-    <folder id="nagios_inbox" server="127.0.0.1" user="nagios" pass="nagios"/>
+    <folder id="nagios_inbox" server="127.0.0.1" user="nagios" pass="nagios"
+        folder="INBOX.Reports.To Be Processed"/>
     
     <!--
         A template teaches check_imap_email_config how to recognize an email and

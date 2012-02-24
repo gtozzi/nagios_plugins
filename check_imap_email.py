@@ -34,12 +34,13 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 NAME = 'check_imap_email'
-VERSION = '0.1'
+VERSION = '0.2'
 
 import sys, traceback
 import argparse
 from xml.etree import ElementTree
 import re
+import imaplib
 
 class Ret:
     ''' Return code and text handler '''
@@ -120,20 +121,21 @@ class Config:
             self.server = node.get('server')
             self.user = node.get('user')
             self.pwd = node.get('pass')
+            self.folder = node.get('folder')
     
     class Template:
         
         def __init__(self, node):
-            self.__subjects = []
-            self.__bodies = []
+            self.subjects = []
+            self.bodies = []
             for s in node.findall('subject'):
-                self.__subjects.append(self.Subject(s))
+                self.subjects.append(self.Subject(s, '^Subject: ', r'\r?$'))
             for s in node.findall('body'):
-                self.__bodies.append(self.Body(s))
+                self.bodies.append(self.Body(s))
         
         class MailPart:
-            def __init__(self, node):
-                self.re = re.compile(node.text,re.M)
+            def __init__(self, node, prepend='', append=''):
+                self.re = re.compile(prepend + node.text + append, re.M)
                 self.status = node.get('status')
         
         class Subject(MailPart):
@@ -161,12 +163,41 @@ class Main:
     
     def run(self):
         ''' Run the checks '''
+        retval = Ret()
         
         # Load the template
         template = self.__config.getTemplate(self.__args.template)
         
         # Open the folder
         folder = self.__config.getFolder(self.__args.folder)
+        conn = imaplib.IMAP4(folder.server)
+        try:
+            conn.login_cram_md5(folder.user, folder.pwd)
+        except imaplib.IMAP4.error:
+            conn.login(folder.user, folder.pwd)
+        conn.select(folder.folder if folder.folder else 'INBOX', True)
+        
+        # Get and test the headers
+        status, ret = conn.search(None, 'ALL')
+        for num in reversed(ret[0].split()):
+            typ, data = conn.fetch(num,
+                '(UID BODY[HEADER.FIELDS (from to subject date)])') # BODY[TEXT]
+            matched = False
+            for subject in template.subjects:
+                print subject.re.pattern, data[0][1]
+                if subject.re.search(data[0][1]):
+                    matched = True
+                    if subject.status == 'ok':
+                        retval.change(Ret.OK, 'Found by subject')
+                    else:
+                        retval.change(Ret.UNKNOWN, 'Found by subject')
+            if not matched:
+                continue
+            else:
+                print data
+                break
+        
+        return retval
 
 if __name__ == '__main__':
     try:
@@ -176,7 +207,8 @@ if __name__ == '__main__':
         ret.change(Ret.UNKNOWN, 'Config error: ' + str(e))
     except Exception as e:
         ret = Ret()
-        ret.change(Ret.UNKNOWN, 'Plugin exception: ' + str(e), traceback.format_exc())
+        ret.change(Ret.UNKNOWN, 'Plugin exception: ' + str(e),
+            str(e.__class__) + "\n" + traceback.format_exc())
     else:
         if not ret:
             ret = Ret()
