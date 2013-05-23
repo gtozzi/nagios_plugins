@@ -1,12 +1,13 @@
 #!/bin/sh
 #
-# check_apcupsd 2.4
+# check_apcupsd 2.5
 # Nagios plugin to monitor APC Smart-UPSes and Back-UPSes using apcupsd.
 #
 # Copyright (c) 2008 Martin Toft <mt@martintoft.dk>
 # Copyright (c) 2010 Gerold Gruber <Gerold.Gruber@edv2g.de> (perfdata)
 # Copyright (C) 2010 Gabriele Tozzi <gabriele@tozzi.eu> (Back-UPS)
 # Copyright (c) 2010 Ermanno Baschiera <ebaschiera@gmail.com> (Back-UPS ES)
+# Copyright (c) 2012 Patrick Reinhardt <pr@reinhardtweb.de> (more Back-UPS ES)
 #
 # Permission to use, copy, modify, and distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -180,7 +181,7 @@ fi
 if [ "$ARG" != "linefail" -a "$ARG" != "battstat" -a "$ARG" != "status" ]; then
 	VALUE=`$APCACCESS status $HOSTNAME:$PORT | grep -i ^$ARG | \
 		sed 's/.*:  *\([0-9.][0-9.]*\)[^0-9.].*/\1/'`
-	if [ "$VALUE" != "0" ]; then
+	if [ "$VALUE" != "0" -a "$VALUE" != "0.0" ]; then
 		VALUE=`echo $VALUE | sed 's/^0*//'`
 	fi
 	ROUNDED=`echo $VALUE | sed 's/\..*//'`
