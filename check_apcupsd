@@ -1,13 +1,17 @@
 #!/bin/sh
 #
-# check_apcupsd 2.5
+# check_apcupsd 2.6
 # Nagios plugin to monitor APC Smart-UPSes and Back-UPSes using apcupsd.
 #
-# Copyright (c) 2008 Martin Toft <mt@martintoft.dk>
-# Copyright (c) 2010 Gerold Gruber <Gerold.Gruber@edv2g.de> (perfdata)
-# Copyright (C) 2010 Gabriele Tozzi <gabriele@tozzi.eu> (Back-UPS)
-# Copyright (c) 2010 Ermanno Baschiera <ebaschiera@gmail.com> (Back-UPS ES)
+# Website: http://martintoft.dk/?p=check_apcupsd
+#
+# Copyright (c) 2013 Stacy Millions <stacy@millions.ca> (improved error
+# handling and support for battery voltage)
 # Copyright (c) 2012 Patrick Reinhardt <pr@reinhardtweb.de> (more Back-UPS ES)
+# Copyright (c) 2010 Ermanno Baschiera <ebaschiera@gmail.com> (Back-UPS ES)
+# Copyright (C) 2010 Gabriele Tozzi <gabriele@tozzi.eu> (Back-UPS)
+# Copyright (c) 2010 Gerold Gruber <Gerold.Gruber@edv2g.de> (perfdata)
+# Copyright (c) 2008 Martin Toft <mt@martintoft.dk>
 #
 # Permission to use, copy, modify, and distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -48,6 +52,13 @@
 # define service {
 #	 use generic-service
 #	 host_name ups1
+#	 service_description BATT VOLTAGE
+#	 check_command check_apcupsd!battv!95!85
+#	 }
+# 
+# define service {
+#	 use generic-service
+#	 host_name ups1
 #	 service_description TEMP
 #	 check_command check_apcupsd!itemp!35!40
 #	 }
@@ -81,17 +92,19 @@ LOADCRIT=85
 TIMEWARN=10
 TIMECRIT=5
 
-
 usage()
 {
 	echo "usage: check_apcupsd [-c critical_value] [-h hostname] [-p port]"
 	echo -n "		     [-w warning_value] "
-	echo "<bcharge|itemp|loadpct|timeleft|linefail|battstat|status>"
+	echo "<bcharge|battv|itemp|loadpct|timeleft|linefail|battstat|status>"
 	echo
 	echo "hostname and port defaults to localhost and 3551, respectively."
 	echo
 	echo "checks:"
 	echo "    bcharge  = battery charge, measured in percent."
+	echo "    battv    = battery voltage, measured in volts."
+	echo "               critical_value and warning_value are given as a"
+	echo "               percentage of the battery's nominal voltage"
 	echo "    itemp    = internal temperature, measured in degree Celcius."
 	echo "    loadpct  = load percent, measured in percent (do'h!)."
 	echo "    timeleft = time left with current battery charge and load,"
@@ -131,8 +144,8 @@ while [ $OPTIND -gt 1 ]; do
 	OPTIND=$(($OPTIND-1))
 done
 
-if [ "$ARG" != "bcharge" -a "$ARG" != "itemp" -a "$ARG" != "loadpct" \
-	-a "$ARG" != "timeleft" -a "$ARG" != "linefail" \
+if [ "$ARG" != "bcharge" -a "$ARG" != "battv" -a "$ARG" != "itemp" \
+	-a "$ARG" != "loadpct" -a "$ARG" != "timeleft" -a "$ARG" != "linefail" \
 	-a "$ARG" != "battstat" -a  "$ARG" != "status" ]; then
 	usage
 fi
@@ -153,7 +166,7 @@ if [ "$CRITVAL" != "" -a "`echo $CRITVAL | grep '^[0-9][0-9]*$'`" = "" ]; then
 fi
 
 if [ "$WARNVAL" != "" -a "$CRITVAL" != "" ]; then
-	if [ "$ARG" = "bcharge" -o "$ARG" = "timeleft" ]; then
+	if [ "$ARG" = "bcharge" -o "$ARG" = "battv" -o "$ARG" = "timeleft" ]; then
 		if [ $WARNVAL -le $CRITVAL ]; then
 			echo "Error: warning_value must be greater than critical_value!"
 			exit 3
@@ -181,6 +194,10 @@ fi
 if [ "$ARG" != "linefail" -a "$ARG" != "battstat" -a "$ARG" != "status" ]; then
 	VALUE=`$APCACCESS status $HOSTNAME:$PORT | grep -i ^$ARG | \
 		sed 's/.*:  *\([0-9.][0-9.]*\)[^0-9.].*/\1/'`
+	if [ -z "$VALUE" ]; then
+		echo "UPS does not support $ARG"
+		exit 3
+	fi
 	if [ "$VALUE" != "0" -a "$VALUE" != "0.0" ]; then
 		VALUE=`echo $VALUE | sed 's/^0*//'`
 	fi
@@ -189,6 +206,10 @@ else
 	VALUE=`$APCACCESS status $HOSTNAME:$PORT | grep -i ^$ARG | \
 		sed 's/.*:  *\([A-Z]*\).*/\1/'`
 #echo "$VALUE"
+	if [ -z "$VALUE" ]; then
+		echo "UPS does not support $ARG"
+		exit 3
+	fi
 	if [ "$VALUE" = "ONLINE" ]; then
 		ROUNDED=1
 	else
@@ -245,6 +266,45 @@ bcharge)
 		EXITVALUE=0
 	fi
 	echo "${STATUS} - Battery Charge: ${VALUE}%|'Battery Charge'=${VALUE}%;$WARNVAL:;$CRITVAL:;;"
+	;;
+battv)
+	# get nominal battery voltage
+	NOMVAL=`$APCACCESS status $HOSTNAME:$PORT | grep -i '^NOMBATTV' | \
+		sed 's/.*:  *\([0-9.]*\).*$/\1/'`
+
+	if [ -z "$NOMVAL" ]; then
+		if [ -n "$WARNVAL" -o -n "$CRITVAL" ]; then
+			echo UPS does not support NOMBATTV
+			exit 3
+		fi
+	else
+		#calculate percentage of nominal value BATTV is
+		PVAL=`dc <<-__EOF__
+			6k
+			100
+			${VALUE}
+			${NOMVAL}/*p
+		__EOF__`
+
+		# round the percentage of nominal
+		ROUNDED=`echo $PVAL | sed 's/\..*//'`
+
+		STATUS="OK"
+		EXITVALUE=0
+		if [ "$WARNVAL" != "" ]; then
+			if [ $ROUNDED -lt $WARNVAL ]; then
+				STATUS="WARNING"
+				EXITVALUE=1
+			fi
+		fi
+		if [ "$CRITVAL" != "" ]; then
+			if [ $ROUNDED -lt $CRITVAL ]; then
+				STATUS="CRITICAL"
+				EXITVALUE=2
+			fi
+		fi
+	fi
+	echo "${STATUS} - Battery Voltage: ${VALUE}V|'Battery Voltage'=${VALUE}V;$WARNVAL:;$CRITVAL:;;"
 	;;
 itemp)
 	if [ "$CRITVAL" = "" ]; then
