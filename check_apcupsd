@@ -1,10 +1,11 @@
 #!/bin/sh
 #
-# check_apcupsd 2.2
-# Nagios plugin to monitor APC Smart-UPSes using apcupsd.
+# check_apcupsd 2.3
+# Nagios plugin to monitor APC Smart-UPSes and Back-UPSes using apcupsd.
 #
 # Copyright (c) 2008 Martin Toft <mt@martintoft.dk>
 # Copyright (c) 2010 Gerold Gruber <Gerold.Gruber@edv2g.de> (perfdata)
+# Copyright (C) 2010 Gabriele Tozzi <gabriele@tozzi.eu> (Back-UPS)
 #
 # Permission to use, copy, modify, and distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -83,7 +84,7 @@ usage()
 {
 	echo "usage: check_apcupsd [-c critical_value] [-h hostname] [-p port]"
 	echo -n "		     [-w warning_value] "
-	echo "<bcharge|itemp|loadpct|timeleft>"
+	echo "<bcharge|itemp|loadpct|timeleft|linefail|battstat>"
 	echo
 	echo "hostname and port defaults to localhost and 3551, respectively."
 	echo
@@ -93,6 +94,8 @@ usage()
 	echo "    loadpct  = load percent, measured in percent (do'h!)."
 	echo "    timeleft = time left with current battery charge and load,"
 	echo "	       measured in minutes."
+	echo "    linefail = Whether the line is OK or not (Back UPS only)"
+	echo "    battstat = Whether the battery is OK or not (Back UPS only)"
 	exit 3
 }
 
@@ -126,7 +129,8 @@ while [ $OPTIND -gt 1 ]; do
 done
 
 if [ "$ARG" != "bcharge" -a "$ARG" != "itemp" -a "$ARG" != "loadpct" \
-	-a "$ARG" != "timeleft" ]; then
+	-a "$ARG" != "timeleft" -a "$ARG" != "linefail" \
+	-a "$ARG" != "battstat" ]; then
 	usage
 fi
 
@@ -170,14 +174,45 @@ if [ $? -ne 0 ]; then
 	exit 3
 fi
 
-VALUE=`$APCACCESS status $HOSTNAME:$PORT | grep -i ^$ARG | \
-	sed 's/.*:  *\([0-9.][0-9.]*\)[^0-9.].*/\1/'`
-if [ "$VALUE" != "0" ]; then
-	VALUE=`echo $VALUE | sed 's/^0*//'`
+# Back UPS reports only an OK / ERR state
+if [ "$ARG" != "linefail" -a "$ARG" != "battstat" ]; then
+	VALUE=`$APCACCESS status $HOSTNAME:$PORT | grep -i ^$ARG | \
+		sed 's/.*:  *\([0-9.][0-9.]*\)[^0-9.].*/\1/'`
+	if [ "$VALUE" != "0" ]; then
+		VALUE=`echo $VALUE | sed 's/^0*//'`
+	fi
+	ROUNDED=`echo $VALUE | sed 's/\..*//'`
+else
+	VALUE=`$APCACCESS status $HOSTNAME:$PORT | grep -i ^$ARG | \
+		sed 's/.*:  *\([A-Z]*\).*/\1/'`
+	if [ "$VALUE" == "OK" ]; then
+		ROUNDED=1
+	else
+		ROUNDED=0
+	fi
 fi
-ROUNDED=`echo $VALUE | sed 's/\..*//'`
 
 case "$ARG" in
+linefail)
+	if [ $ROUNDED -gt 0 ]; then
+		STATUS="OK"
+		EXITVALUE=0
+	else
+		STATUS="CRITICAL"
+		EXITVALUE=2
+	fi
+	echo "${STATUS} - Power Line: ${VALUE}|'Power Line'=${ROUNDED}"
+	;;
+battstat)
+        if [ $ROUNDED -gt 0 ]; then
+                STATUS="OK"
+                EXITVALUE=0
+        else
+                STATUS="CRITICAL"
+                EXITVALUE=2
+        fi
+        echo "${STATUS} - Battery Status: ${VALUE}|'Battery Status'=${ROUNDED}"
+        ;;
 bcharge)
 	if [ "$CRITVAL" = "" ]; then
 		CRITVAL=$CHARGECRIT
