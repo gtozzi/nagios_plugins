@@ -4,7 +4,7 @@
 
 '''
     This is a nagios plugin wich goal is to read status information from a
-    D-Link DSL-320T modem.
+    D-Link DSL-320B modem.
     
     Return codes are:
     0   OK
@@ -33,9 +33,10 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
-NAME = 'check_dsl320T'
+NAME = 'check_dsl320B'
 VERSION = '1.0'
 
+import re
 import argparse
 import os, sys
 import traceback
@@ -111,10 +112,9 @@ class MyTelnet(telnetlib.Telnet):
 
 class Main(object):
     
-    def __init__(self, host, user, pasw, warn=None, crit=None):
+    def __init__(self, host, pasw, warn=None, crit=None):
         self.ret = Ret()
         self.host = host
-        self.user = user
         self.pasw = pasw
         self.warn = warn
         self.crit = crit
@@ -122,32 +122,35 @@ class Main(object):
     def __runCommand(self, cmd):
         conn = MyTelnet(self.host)
         
-        conn.chat('login:', self.user + "\n")
         conn.chat('Password:', self.pasw + "\n")
-        conn.chat('#', cmd + "\n")
+        conn.chat('tc>', cmd + "\n")
         
-        ans = int(conn.read_until('#').split("\n")[1])
+        lines = conn.read_until('tc>').split("\n")
         
         conn.close()
         
-        return ans
+        return lines
     
-    def __checkDatarate(self, rate):
+    def checkDataRate(self, type):
+        lines = self.__runCommand("wan adsl chandata")
+        if type == 'down':
+            end = 'near'
+        else:
+            end = 'far'
+        for line in lines:
+            m = re.match(end+'-end fast channel bit rate: ([0-9]+) kbps', line)
+            if m:
+                rate = int(m.group(1))
+                break
+        else:
+            raise RuntimeError(end + ' bit rate not found')
+        
         if self.crit and rate < self.crit:
             self.ret.change(Ret.CRITICAL, "%iKbps" % rate)
         elif self.warn and rate < self.warn:
             self.ret.change(Ret.WARNING, "%iKbps" % rate)
         else:
             self.ret.change(Ret.OK, "%iKbps" % rate)
-    
-    def checkDownDataRate(self):
-        rate = self.__runCommand("echo \"begin;sar:status/dsl_ds_rate;end\" | cm_cli")
-        self.__checkDatarate(rate)
-        return self.ret
-    
-    def checkUpDataRate(self):
-        rate = self.__runCommand("echo \"begin;sar:status/dsl_us_rate;end\" | cm_cli")
-        self.__checkDatarate(rate)
         return self.ret
 
 
@@ -157,19 +160,18 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(description=NAME+' '+VERSION+': '+__doc__, prog=NAME)
         parser.add_argument('check', choices=['downdatarate', 'updatarate'], help='what to check')
         parser.add_argument('host', help='the modem\'s IP address')
-        parser.add_argument('user', help='the modem\'s Username')
         parser.add_argument('pasw', help='the modem\'s Password')
         parser.add_argument('-w', '--warn', help='warning level', type=int)
         parser.add_argument('-c', '--crit', help='critical level', type=int)
         
         args = parser.parse_args()
         
-        checker = Main(args.host, args.user, args.pasw, args.warn, args.crit)
+        checker = Main(args.host, args.pasw, args.warn, args.crit)
         
         if args.check == 'downdatarate':
-            ret = checker.checkDownDataRate()
+            ret = checker.checkDataRate('down')
         elif args.check == 'updatarate':
-            ret = checker.checkUpDataRate()
+            ret = checker.checkDataRate('up')
         
     except Exception as e:
         ret = Ret()
