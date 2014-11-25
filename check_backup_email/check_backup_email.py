@@ -117,10 +117,13 @@ class Main:
 		time = datetime.datetime.strptime(res[0], r'%Y-%m-%dT%H:%M:%S.%f')
 		status = bool(res[1])
 		elapsed = datetime.datetime.now() - time
-		mex = "Job {} recorded on {:%d-%m-%Y at %H:%M:%S}".format(self.job, time)
+		stxt = 'Succesful' if status else 'Failed'
+		mex = "{} job {} recorded on {:%d-%m-%Y at %H:%M:%S}".format(stxt, self.job, time)
 
 		if status:
 			ret.change(Ret.OK, mex)
+		else:
+			ret.change(Ret.CRITICAL, mex)
 
 		if elapsed.total_seconds() > 60 * 60 * self.crit:
 			ret.change(Ret.CRITICAL, mex)
