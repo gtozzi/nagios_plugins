@@ -88,6 +88,8 @@ try:
 				log.info('Detected email for job %s', j)
 				job = j
 				break
+	if not job:
+		sys.exit(0)
 
 	# Read job format
 	fmt = config.get('job_'+job, '_format')
