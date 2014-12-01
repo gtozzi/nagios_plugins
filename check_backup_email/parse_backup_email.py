@@ -22,7 +22,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 NAME = 'parse_backup_email'
-VERSION = '0.5'
+VERSION = '0.6'
 DB = 'backup_email.db'
 
 import os, sys
@@ -55,16 +55,7 @@ try:
 
 	# Reads STDIN until two consecutive empty line detected (end of email)
 	parser = email.parser.FeedParser()
-	empty = False
-	while True:
-		line = sys.stdin.readline()
-		if line.strip() == '':
-			if empty:
-				break
-			else:
-				empty = True
-		else:
-			empty = False
+	for line in sys.stdin:
 		parser.feed(line)
 	msg = parser.close()
 
