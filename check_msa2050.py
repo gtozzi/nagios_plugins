@@ -245,15 +245,20 @@ class Main:
 
 		return method()
 
-	def _printStatus(self, status):
+	def _printStatus(self, status, summary=None):
 		if status == self.OK:
-			print('OK')
+			print('OK', end='')
 		elif status == self.WARNING:
-			print('WARNING')
+			print('WARNING', end='')
 		elif status == self.CRITICAL:
-			print('CRITICAL')
+			print('CRITICAL', end='')
 		else:
-			print('UNKNOWN')
+			print('UNKNOWN', end='')
+
+		if summary:
+			print(': ', end='')
+			print(summary, end='')
+		print()
 
 	def _check(self, cmd):
 		''' Base check function '''
@@ -269,30 +274,44 @@ class Main:
 
 		return res, status, message
 
-	def _ret(self, status, message):
+	def _ret(self, status, message=None, summary=None):
 		''' Base return function '''
-		if not message and status == self.OK:
-			status = self.UNKNOWN
-		self._printStatus(status)
-		print(', '.join(message))
+		self._printStatus(status, summary)
+		if message:
+			print(', '.join(message))
 		return status
 
 	def disks(self):
 		res, status, message = self._check(('show', 'disks'))
+
+		summaries = {}
+		count = 0
+
 		for obj in res:
 			if obj.attrs['basetype'] == 'drives':
+				count += 1
 				name = obj['durable-id'].value
 				health = obj['health'].value
 				message.append('{}: {}'.format(name, health))
 				if health != 'OK':
 					status = self.CRITICAL
 
-		return self._ret(status, message)
+				if health not in summaries:
+					summaries[health] = 0
+				summaries[health] += 1
+
+		summary = ', '.join('{}/{} {}'.format(v,count,k) for k,v in summaries.items()) 
+		return self._ret(status, message, summary)
 
 	def diskstemp(self):
 		res, status, message = self._check(('show', 'disks'))
+
+		summaries = {}
+		count = 0
+
 		for obj in res:
 			if obj.attrs['basetype'] == 'drives':
+				count += 1
 				name = obj['durable-id'].value
 				temp = obj['temperature-numeric'].value
 				tempstatus = obj['temperature-status'].value
@@ -302,7 +321,12 @@ class Main:
 				elif temp > self.TEMPMAX:
 					status = max(status, self.CRITICAL)
 
-		return self._ret(status, message)
+				if tempstatus not in summaries:
+					summaries[tempstatus] = 0
+				summaries[tempstatus] += 1
+
+		summary = ', '.join('{}/{} {}'.format(v,count,k) for k,v in summaries.items()) 
+		return self._ret(status, message, summary)
 
 	def volumes(self):
 		res, status, message = self._check(('show', 'volumes'))
@@ -325,11 +349,11 @@ class Main:
 					status = max(status, self.WARNING)
 					space = '!'
 
-				message.append(r'{}: {}, {}/{} ({:.1%}{})'.format(name, health, allocatedstr, totalstr, used, space))
+				message.append(r'{} {} {}/{} ({:.1%}{})'.format(name, health, allocatedstr, totalstr, used, space))
 				if health != 'OK':
 					status = self.CRITICAL
 
-		return self._ret(status, message)
+		return self._ret(status, None, ', '.join(message))
 
 	def system(self):
 		res, status, message = self._check(('show', 'system'))
@@ -339,11 +363,11 @@ class Main:
 				name = obj['system-name'].value
 				health = obj['health'].value
 
-				message.append(r'{}: {}'.format(name, health))
+				message.append(r'{} {}'.format(name, health))
 				if health != 'OK':
 					status = self.CRITICAL
 
-		return self._ret(status, message)
+		return self._ret(status, None, ', '.join(message))
 
 	def events(self):
 		res, status, message = self._check(('show', 'events', 'error'))
@@ -351,6 +375,7 @@ class Main:
 		severities = {}
 		for obj in res:
 			if obj.attrs['basetype'] == 'events':
+				count += 1
 				severity = obj['severity'].value
 				if severity not in severities:
 					severities[severity] = 0
@@ -363,10 +388,10 @@ class Main:
 
 		if not severities:
 			message.append('no events')
-		for k, v in severities.items():
-			message.append('{}: {}'.format(k, v))
+		for k, v in severities.items(): 
+			message.append('{} {}'.format(v, k))
 
-		return self._ret(status, message)
+		return self._ret(status, None, ', '.join(message))
 
 
 if __name__ == '__main__':
