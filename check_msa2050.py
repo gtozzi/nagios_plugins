@@ -2,7 +2,7 @@
 
 '''
 	This is an icinga / nagios plugin for reading status information from HPE MSA2050
-	storage. It should work with MSA1050 too.
+	and HPE MSA1060 storage. It should work with MSA1050 too.
 
 	Return codes are:
 	0   OK
@@ -78,6 +78,8 @@ class HpeMsaCliProperty(HpeMsaCliElem):
 			self.value = self.xml.text
 		elif self['type'].startswith('uint') or self['type'].startswith('sint'):
 			self.value = int(self.xml.text)
+		elif self['type'] == 'hex8':
+			self.value = self.xml.text
 		else:
 			raise NotImplementedError('Property type {} not implemented'.format(self['type']))
 
@@ -373,6 +375,7 @@ class Main:
 		res, status, message = self._check(('show', 'events', 'error'))
 
 		severities = {}
+		count = 0
 		for obj in res:
 			if obj.attrs['basetype'] == 'events':
 				count += 1
