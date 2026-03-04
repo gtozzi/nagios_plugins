@@ -214,7 +214,7 @@ class Main:
 			return f"{hours} hours {minutes} minutes ago"
 		return f"{minutes} minutes ago"
 
-	def run(self, warn_secs:int, crit_secs:int) -> int:
+	def run(self, warn_secs:int, crit_secs:int, include_tags:list[str]=[], exclude_tags:list[str]=[], include_vmids:list[int]=[], exclude_vmids:list[int]=[]) -> int:
 		now = datetime.datetime.now().astimezone()
 
 		warn_time = self.__parse_secs_interval(now, warn_secs, 'warn')
@@ -268,6 +268,27 @@ class Main:
 						last_backups[content['vmid']] = content
 
 		self.log.debug(pprint.pformat(last_backups))
+
+		def vm_tags(info:dict) -> list[str]:
+			return [t.strip() for t in (info.get('tags', '') or '').split(';')]
+
+		# Filter vm_info based on include/exclude options.
+		# include_tags and include_vmids form a union: a VM is included if it matches either.
+		# exclude_tags and exclude_vmids are then applied and always take precedence.
+		filtered_vm_info = {}
+		for vmid, info in vm_info.items():
+			if include_tags or include_vmids:
+				tag_match = include_tags and any(t in vm_tags(info) for t in include_tags)
+				vmid_match = include_vmids and vmid in include_vmids
+				if not tag_match and not vmid_match:
+					continue
+			if exclude_tags and any(t in vm_tags(info) for t in exclude_tags):
+				continue
+			if exclude_vmids and vmid in exclude_vmids:
+				continue
+			filtered_vm_info[vmid] = info
+		vm_info = filtered_vm_info
+		last_backups = {vmid: lb for vmid, lb in last_backups.items() if vmid in vm_info}
 
 		overall_status = OK
 		perfdata:dict[str,typing.Iterable[str|int]] = {}
@@ -339,11 +360,15 @@ if __name__ == '__main__':
 		parser.add_argument('-w', '--warning', type=int, default=60*60*(24+4), help='warning age in seconds')
 		parser.add_argument('-c', '--critical', type=int, default=60*60*(24*3+4), help='critical age in seconds')
 		parser.add_argument('-t', '--timeout', type=int, default=30, help='timeout per api request in seconds')
+		parser.add_argument('--include-tag', dest='include_tags', action='append', default=[], metavar='TAG', help='only check VMs with this tag (can be repeated)')
+		parser.add_argument('--exclude-tag', dest='exclude_tags', action='append', default=[], metavar='TAG', help='skip VMs with this tag (can be repeated)')
+		parser.add_argument('--include-vmid', dest='include_vmids', type=int, action='append', default=[], metavar='VMID', help='only check this vmid (can be repeated)')
+		parser.add_argument('--exclude-vmid', dest='exclude_vmids', type=int, action='append', default=[], metavar='VMID', help='skip this vmid (can be repeated)')
 		args = parser.parse_args()
 
 		logging.basicConfig(stream=sys.stderr, level=logging.DEBUG if args.verbose else logging.WARN)
 		checker = Main(args.url, args.user, args.pwd, args.fingerprint, args.timeout)
-		sys.exit(checker.run(args.warning, args.critical))
+		sys.exit(checker.run(args.warning, args.critical, args.include_tags, args.exclude_tags, args.include_vmids, args.exclude_vmids))
 
 	except InvalidSSLCertificate as e:
 		print('UNKNOWN')
