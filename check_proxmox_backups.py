@@ -63,10 +63,14 @@ except ModuleNotFoundError:
 class FingerprintAdapter(requests.adapters.HTTPAdapter):
 	''' Adapter for checking SSL fingerprint '''
 	def __init__(self, fingerprint:str, **kwargs):
+		'''
+		@param fingerprint: Expected SHA256 fingerprint of the server certificate
+		'''
 		self.fingerprint = fingerprint
 		super().__init__(**kwargs)
 
 	def init_poolmanager(self, *args, **kwargs):
+		''' Injects the fingerprint assertion into the connection pool '''
 		kwargs['assert_fingerprint'] = self.fingerprint
 		return super().init_poolmanager(*args, **kwargs)
 
@@ -80,6 +84,9 @@ class InvalidSSLCertificate(Exception):
 	''' Invalid certificate presented by the server '''
 
 	def __init__(self, fingerprint:str|None=None) -> None:
+		'''
+		@param fingerprint: Fingerprint of the certificate that failed validation, if available
+		'''
 		super().__init__('Invalid server SSL certificate, fingerprint: ' + str(fingerprint))
 
 
@@ -87,6 +94,13 @@ class ProxmoxApiClient:
 	''' Connects to a proxmox server web API '''
 
 	def __init__(self, url:str, user:str='', pwd:str='', fingerprint:str|None=None, timeout:int|None=None) -> None:
+		'''
+		@param url: Base HTTPS URL of the Proxmox server (e.g. https://host:8006/)
+		@param user: Login username (e.g. nagios@pve)
+		@param pwd: Login password
+		@param fingerprint: Expected SHA256 certificate fingerprint; disables normal cert verification
+		@param timeout: Per-request timeout in seconds
+		'''
 		self.log = logging.getLogger('pbsapi')
 
 		parsed = urllib.parse.urlparse(url)
@@ -125,6 +139,19 @@ class ProxmoxApiClient:
 		self.ticket:AuthTicket|None = None
 
 	def get_api2_json(self, path:str, data:dict[str,str]|None=None, auto_login:bool=True) -> typing.Any:
+		'''
+		Performs a GET or POST request against the Proxmox /api2/json endpoint and returns the
+		decoded response data. Automatically authenticates if credentials are set and no ticket
+		has been obtained yet.
+
+		@param path: API path relative to /api2/json/ (e.g. "nodes")
+		@param data: If provided, a POST is performed with this form data; GET otherwise
+		@param auto_login: Automatically obtain an auth ticket before the request if needed
+		@return: The "data" field from the decoded JSON response
+		@raise InvalidSSLCertificate: If the server presents an unexpected SSL certificate
+		@raise requests.HTTPError: If the server returns a non-2xx status
+		@raise RuntimeError: If the response does not contain a "data" key
+		'''
 		if (self.user or self.pwd) and self.ticket is None and auto_login:
 			res = self.get_api2_json('access/ticket', {'username':self.user, 'password':self.pwd}, auto_login=False)
 			self.ticket = AuthTicket(res['ticket'], res['CSRFPreventionToken'])
@@ -164,6 +191,15 @@ class ProxmoxApiClient:
 		return decoded['data']
 
 	def get_cert_fingerprint(self, host:str, port:int|None=None, hash_algo:str="sha256") -> str:
+		'''
+		Retrieves the TLS certificate fingerprint for the given host without validating it.
+
+		@param host: Hostname to connect to
+		@param port: TCP port, defaults to 80
+		@param hash_algo: Hash algorithm to use (e.g. "sha256")
+		@return: Colon-separated uppercase hex fingerprint (e.g. "AB:CD:...")
+		@raise RuntimeError: If the server returns an empty certificate
+		'''
 		if port is None:
 			port = 80
 		self.log.debug('Retrieveing fingerprint for %s:%s', host, port)
@@ -188,11 +224,27 @@ class Main:
 	''' The main plugin class '''
 
 	def __init__(self, url:str, user:str='', pwd:str='', fingerprint:str|None=None, timeout:int|None=None) -> None:
+		'''
+		@param url: Base HTTPS URL of the Proxmox server (e.g. https://host:8006/)
+		@param user: Login username (e.g. nagios@pve)
+		@param pwd: Login password
+		@param fingerprint: Expected SHA256 certificate fingerprint; disables normal cert verification
+		@param timeout: Per-request timeout in seconds
+		'''
 		self.log = logging.getLogger('main')
 
 		self.api = ProxmoxApiClient(url, user, pwd, fingerprint, timeout)
 
 	def __parse_secs_interval(self, now:datetime.datetime, secs:int, name:str) -> datetime.datetime|None:
+		'''
+		Converts a threshold expressed in seconds to an absolute datetime.
+
+		@param now: Reference datetime representing the current moment
+		@param secs: Interval in seconds; 0 means disabled (returns None)
+		@param name: Parameter name used in error messages
+		@return: now minus the given interval, or None if secs is 0
+		@raise ValueError: If secs is negative
+		'''
 		if secs < 0:
 			raise ValueError(f'{name}_secs must be >= 0')
 		if secs == 0:
@@ -200,6 +252,12 @@ class Main:
 		return now - datetime.timedelta(seconds=secs)
 
 	def __humanize_timedelta(self, td:datetime.timedelta) -> str:
+		'''
+		Formats a timedelta as a human-readable "X ago" string.
+
+		@param td: The time difference to format
+		@return: A string like "2 days 3 hours ago" or "45 minutes ago"
+		'''
 		seconds = int(td.total_seconds())
 
 		days = seconds // 86400
@@ -215,6 +273,18 @@ class Main:
 		return f"{minutes} minutes ago"
 
 	def run(self, warn_secs:int, crit_secs:int, include_tags:list[str]=[], exclude_tags:list[str]=[], include_vmids:list[int]=[], exclude_vmids:list[int]=[]) -> int:
+		'''
+		Queries the Proxmox API, checks backup ages for all matching VMs, and prints the
+		Nagios-compatible status output.
+
+		@param warn_secs: Backup age in seconds that triggers WARNING; 0 disables
+		@param crit_secs: Backup age in seconds that triggers CRITICAL; 0 disables
+		@param include_tags: If non-empty, only VMs matching at least one of these tags or include_vmids are checked
+		@param exclude_tags: VMs matching any of these tags are always skipped
+		@param include_vmids: If non-empty, only VMs matching at least one of these vmids or include_tags are checked
+		@param exclude_vmids: VMs matching any of these vmids are always skipped
+		@return: Nagios exit code (OK/WARNING/CRITICAL/UNKNOWN)
+		'''
 		now = datetime.datetime.now().astimezone()
 
 		warn_time = self.__parse_secs_interval(now, warn_secs, 'warn')
@@ -270,6 +340,10 @@ class Main:
 		self.log.debug(pprint.pformat(last_backups))
 
 		def vm_tags(info:dict) -> list[str]:
+			'''
+			@param info: VM info dict as returned by the Proxmox API
+			@return: List of tags assigned to the VM, stripped of whitespace
+			'''
 			return [t.strip() for t in (info.get('tags', '') or '').split(';')]
 
 		# Filter vm_info based on include/exclude options.
@@ -325,6 +399,13 @@ class Main:
 		return overall_status
 
 	def _printStatus(self, status:int, perfdata:dict[str,typing.Iterable[str|int]]={}, details:list[str]=[]):
+		'''
+		Prints the Nagios-compatible plugin output to stdout.
+
+		@param status: Nagios exit code (OK/WARNING/CRITICAL/UNKNOWN)
+		@param perfdata: Dict mapping metric labels to (value, warn, crit) tuples
+		@param details: Additional lines printed after the status line
+		'''
 		if status == OK:
 			print('OK', end='')
 		elif status == WARNING:
