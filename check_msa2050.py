@@ -106,6 +106,9 @@ class HpeMsaCliObject(HpeMsaCliElem):
 			prop = HpeMsaCliProperty(child)
 			self.props[prop['name']] = prop
 
+	def __contains__(self, key):
+		return key in self.props
+
 	def __getitem__(self, key):
 		return self.props[key]
 
@@ -119,13 +122,15 @@ class HpeMsaCliObject(HpeMsaCliElem):
 class HpeMsaCliApi:
 	''' Connects to the MSA2050 Storage via the web API '''
 
-	def __init__(self, host, user='monitor', pwd='', ssl=False, timeout=30, verifycrt=False):
+	DEFAULT_TIMEOUT = 60
+
+	def __init__(self, host, user='monitor', pwd='', ssl=False, timeout=None, verifycrt=False):
 		self.log = logging.getLogger('2050cli')
 		self.host = host
 		self.user = user
 		self.pwd = pwd
 		self.ssl = ssl
-		self.timeout = 30
+		self.timeout = self.DEFAULT_TIMEOUT if timeout is None else timeout
 		self.verifycrt = verifycrt
 
 		self.conn = None
@@ -228,13 +233,14 @@ class Main:
 	SPACE_WARN_PCT = 85
 	SPACE_CRIT_PCT = 95
 
-	def __init__(self, host, user='monitor', pwd='', ssl=False):
+	def __init__(self, host, user='monitor', pwd='', ssl=False, timeout=None):
 		self.log = logging.getLogger('main')
 		self.host = host
 		self.user = user
 		self.pwd = pwd
 		self.ssl = ssl
-		self.cli = HpeMsaCliApi(self.host, self.user, self.pwd, self.ssl)
+		self.timeout = timeout
+		self.cli = HpeMsaCliApi(self.host, self.user, self.pwd, self.ssl, self.timeout)
 
 	def run(self, check):
 		if not check.isalpha():
@@ -358,16 +364,30 @@ class Main:
 		return self._ret(status, None, ', '.join(message))
 
 	def system(self):
+		name = None
+		health = None
+		reason = None
+
 		res, status, message = self._check(('show', 'system'))
-
 		for obj in res:
+			self.log.debug('OBJ: %s', obj)
 			if obj.attrs['basetype'] == 'system':
-				name = obj['system-name'].value
-				health = obj['health'].value
+				if 'system-name' in obj:
+					name = obj['system-name'].value
+				if 'health' in obj:
+					health = obj['health'].value
+				if 'health-reason' in obj:
+					reason = obj['health-reason'].value
 
-				message.append(r'{} {}'.format(name, health))
-				if health != 'OK':
-					status = self.CRITICAL
+				break
+
+		message.append(r'name "{}", status "{}", reason "{}"'.format(name, health, reason))
+		if health is None:
+			status = self.UNKNOWN
+		elif health.lower() == 'unknown':
+			status = self.UNKNOWN
+		elif health.lower() != 'OK':
+			status = self.CRITICAL
 
 		return self._ret(status, None, ', '.join(message))
 
@@ -407,6 +427,7 @@ if __name__ == '__main__':
 		parser.add_argument('-u', '--user', default='monitor', help='username')
 		parser.add_argument('-p', '--pwd', default='', help='password')
 		parser.add_argument('-s', '--https', action='store_true', help='use HTTPS')
+		parser.add_argument('-t', '--timeout', type=int, help='timeout in seconds')
 		parser.add_argument('-v', '--verbose', action='store_true', help='show more output')
 		args = parser.parse_args()
 
