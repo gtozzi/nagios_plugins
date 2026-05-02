@@ -386,7 +386,7 @@ class Main:
 			status = self.UNKNOWN
 		elif health.lower() == 'unknown':
 			status = self.UNKNOWN
-		elif health.lower() != 'OK':
+		elif health.lower() != 'ok':
 			status = self.CRITICAL
 
 		return self._ret(status, None, ', '.join(message))
