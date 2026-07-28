@@ -434,7 +434,7 @@ if __name__ == '__main__':
 			formatter_class=argparse.ArgumentDefaultsHelpFormatter,
 		)
 		parser.add_argument('url', help='The base url (like https://localhost:8006/)')
-		parser.add_argument('-u', '--user', default='', help='username (like nagios@pve), needs PVEAuditor and PVEDatastoreAdmin privilege')
+		parser.add_argument('-u', '--user', default='', help='username (like nagios@pve), needs PVEVMUser and PVEDatastoreUser privilege or custom "MonitorBackups" "Datastore.Audit, Datastore.AllocateSpace, VM.Audit, VM.Backup" role')
 		parser.add_argument('-p', '--pwd', default='', help='password')
 		parser.add_argument('-v', '--verbose', action='store_true', help='show more output')
 		parser.add_argument('--fingerprint', help='provide ssl cert fingerprint for validation')
