@@ -1,5 +1,17 @@
+# nagios_plugins
 
-This is a repository of nagios plugins.
+A collection of [Nagios](https://www.nagios.org/) / [Icinga](https://icinga.com/)
+plugins for monitoring hardware, network devices, backups and misc services.
 
-Will write something more useful later.
+## Requirements
+
+Each plugin has its own runtime dependencies. The notable external ones:
+
+Run any plugin with `--help` (or `-h`) for its specific options and usage.
+
+## License
+
+This repository ships under **mixed, per-file licenses**. There is no
+project-wide license file: each source file declares its own license in its
+header. Consult each file for the exact terms and copyright holders.
 

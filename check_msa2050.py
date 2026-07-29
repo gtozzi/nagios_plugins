@@ -138,12 +138,13 @@ class HpeMsaCliApi:
 
 	def connect(self):
 		if self.ssl:
+			context = None
 			if self.verifycrt:
 				self.log.debug('Initing HTTPS verified connection')
 			else:
 				self.log.debug('Initing HTTPS unverified connection')
-				unsafectx = ssl._create_unverified_context()
-			self.conn = http.client.HTTPSConnection(self.host, timeout=self.timeout, context=unsafectx)
+				context = ssl._create_unverified_context()
+			self.conn = http.client.HTTPSConnection(self.host, timeout=self.timeout, context=context)
 		else:
 			self.log.debug('Initing HTTP connection')
 			self.conn = http.client.HTTPConnection(self.host, timeout=self.timeout)
@@ -175,7 +176,7 @@ class HpeMsaCliApi:
 
 		try:
 			root = lxml.etree.fromstring(data)
-		except:
+		except Exception:
 			self.log.error('Error parsing XML object')
 			self.log.error(data)
 			raise HpeMsaCliApiError('Error parsing XML object')
@@ -209,6 +210,31 @@ class HpeMsaCliApi:
 		self.token = res[0]['response'].value
 		self.log.debug('Logged in with token {}'.format(self.token))
 
+	def logout(self):
+		''' Does explicit logout, ignoring errors '''
+		if self.token is None:
+			return
+		try:
+			self.log.debug('Logging out')
+			self.request('logout')
+		except Exception as e:
+			self.log.warning('Logout failed: %s', e)
+		finally:
+			self.token = None
+			if self.conn is not None:
+				try:
+					self.conn.close()
+				except Exception:
+					pass
+				self.conn = None
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, exc_type, exc_val, exc_tb):
+		self.logout()
+		return False
+
 	def cmd(self, cmd):
 		''' Executes a command, connect and login automatically when needed
 		@param cmd iterable: The command (es. ['show', 'disk'])
@@ -241,6 +267,13 @@ class Main:
 		self.ssl = ssl
 		self.timeout = timeout
 		self.cli = HpeMsaCliApi(self.host, self.user, self.pwd, self.ssl, self.timeout)
+
+	def __enter__(self):
+		self.cli.__enter__()
+		return self
+
+	def __exit__(self, exc_type, exc_val, exc_tb):
+		return self.cli.__exit__(exc_type, exc_val, exc_tb)
 
 	def run(self, check):
 		if not check.isalpha():
@@ -432,8 +465,9 @@ if __name__ == '__main__':
 		args = parser.parse_args()
 
 		logging.basicConfig(stream=sys.stderr, level=logging.DEBUG if args.verbose else logging.WARN)
-		checker = Main(args.host, args.user, args.pwd, args.https)
-		sys.exit(checker.run(args.check))
+		checker = Main(args.host, args.user, args.pwd, args.https, timeout=args.timeout)
+		with checker:
+			sys.exit(checker.run(args.check))
 
 	except Exception as e:
 		print('UNKNOWN')
